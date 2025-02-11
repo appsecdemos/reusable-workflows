@@ -1,0 +1,17 @@
+name: SBOM Upload
+
+on:
+  workflow_call:
+
+jobs:
+  generate-sbom:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Run Trivy to generate SBOM
+        uses: aquasecurity/trivy-action@v0.3.0
+        with:
+          format: github
+          output: sbom.spdx.json
