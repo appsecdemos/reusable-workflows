@@ -45,7 +45,7 @@ jobs:
   sbom:
     uses: appsecdemos/reusable-workflows/.github/workflows/sbom_upload.yml@v1
     secrets: inherit
-```r
+```
 
 ### Combined Example
 
@@ -72,7 +72,7 @@ jobs:
     secrets: inherit
 ```
 
-Note that this means every PR will have a "skipped" check for `sbom-generation` due to the triggers. Dependancy Graph snapshots should only be uploaded on updates to your default branch.
+Note that this means every PR will have a "skipped" check for `sbom-generation` due to the triggers. Dependency Graph snapshots should only be uploaded on updates to your default branch.
 
 ## License
 
