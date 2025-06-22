@@ -6,8 +6,12 @@ on:
       release_type:
         description: 'Type of release (major, minor, patch)'
         required: true
-        type: string
+        type: choice
         default: 'minor'
+        options:
+          - major
+          - minor
+          - patch
 
 permissions:
   contents: write
