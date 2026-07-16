@@ -31,7 +31,7 @@ jobs:
 
 ### SBOM Upload
 
-Use this workflow to generate an SBOM (Software Bill of Materials) to your repo's [Dependency Graph](https://docs.github.com/en/code-security/supply-chain-security/understanding-your-software-supply-chain/about-the-dependency-graph) using Trivy.
+Use this workflow to scan repository files with Trivy and submit an SBOM to your repo's [Dependency Graph](https://docs.github.com/en/code-security/supply-chain-security/understanding-your-software-supply-chain/about-the-dependency-graph); the caller must grant `contents: write`.
 
 ```yaml
 name: Generate SBOM
@@ -44,8 +44,9 @@ on:
 
 jobs:
   sbom:
+    permissions:
+      contents: write
     uses: appsecdemos/reusable-workflows/.github/workflows/sbom_upload.yml@v1
-    secrets: inherit
 ```
 
 ### Auto Release
@@ -87,8 +88,9 @@ jobs:
 
   sbom-generation:
     if: github.event_name == 'push'
+    permissions:
+      contents: write
     uses: appsecdemos/reusable-workflows/.github/workflows/sbom_upload.yml@v1
-    secrets: inherit
 ```
 
 Note that this means every PR will have a "skipped" check for `sbom-generation` due to the triggers. Dependency Graph snapshots should only be uploaded on updates to your default branch.
