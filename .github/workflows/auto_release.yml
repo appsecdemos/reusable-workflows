@@ -1,0 +1,77 @@
+name: Auto Release
+
+on:
+  workflow_call:
+    inputs:
+      release_type:
+        description: 'Optional release type (major, minor, patch)'
+        required: false
+        type: string
+        default: ''
+
+concurrency:
+  group: release-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Create release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TYPE: ${{ inputs.release_type }}
+        run: |
+          set -euo pipefail
+
+          release_type="$RELEASE_TYPE"
+          if [[ -z "$release_type" ]]; then
+            message="$(git log -1 --format=%B "$GITHUB_SHA")"
+            header="${message%%$'\n'*}"
+            breaking_header='^[A-Za-z][A-Za-z0-9_-]*(\([^)]+\))?!:'
+            fix_header='^fix(\([^)]+\))?:'
+
+            if [[ "$header" =~ $breaking_header ]] \
+              || [[ "$message" == "BREAKING CHANGE:"* ]] \
+              || [[ "$message" == *$'\nBREAKING CHANGE:'* ]]; then
+              release_type=major
+            elif [[ "$header" =~ $fix_header ]]; then
+              release_type=patch
+            else
+              release_type=minor
+            fi
+          fi
+
+          latest_tag="$(git tag --list | awk '/^v[0-9]+\.[0-9]+\.[0-9]+$/' | sort -V | tail -n 1)"
+          if [[ -z "$latest_tag" ]]; then
+            echo "No valid vX.Y.Z tag found. Create an initial version tag first."
+            exit 1
+          fi
+
+          IFS=. read -r major minor patch <<< "${latest_tag#v}"
+          major=$((10#$major))
+          minor=$((10#$minor))
+          patch=$((10#$patch))
+
+          case "$release_type" in
+            major) major=$((major + 1)); minor=0; patch=0 ;;
+            minor) minor=$((minor + 1)); patch=0 ;;
+            patch) patch=$((patch + 1)) ;;
+            *) echo "Invalid release type: $release_type"; exit 1 ;;
+          esac
+
+          new_tag="v$major.$minor.$patch"
+          major_branch="v$major"
+
+          git tag "$new_tag" "$GITHUB_SHA"
+          gh auth setup-git
+          git push origin "refs/tags/$new_tag"
+          git push --force-with-lease origin "$GITHUB_SHA:refs/heads/$major_branch"
+          gh release create "$new_tag" --verify-tag --target "$GITHUB_SHA" --generate-notes --title "$new_tag"

@@ -1,6 +1,9 @@
 name: Release
 
 on:
+  push:
+    branches:
+      - main
   workflow_dispatch:
     inputs:
       release_type:
@@ -13,97 +16,10 @@ on:
           - minor
           - patch
 
-permissions:
-  contents: write
-
 jobs:
   release:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
-        with:
-          fetch-depth: 0
-
-      - name: Create SemVer Release
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            const owner = context.repo.owner;
-            const repo = context.repo.repo;
-            const sha = context.sha;
-            const releaseType = '${{ inputs.release_type }}';
-
-            let latestTag = null;
-            try {
-              const tags = await github.rest.repos.listTags({ 
-                owner, 
-                repo, 
-                per_page: 1 
-              });
-              if (tags.data.length > 0) {
-                latestTag = tags.data[0].name;
-              }
-            } catch (error) {
-              core.setFailed(`Error fetching tags: ${error.message}`);
-              return;
-            }
-
-            if (!latestTag) {
-              core.setFailed('No existing tags found. Please create an initial tag (e.g., v0.1.0) before using this workflow.');
-              return;
-            }
-
-            core.info(`Found latest tag: ${latestTag}`);
-
-            let [major, minor, patch] = latestTag.replace(/^v/, '').split('.').map(Number);
-
-            if (isNaN(major) || isNaN(minor) || isNaN(patch)) {
-              core.setFailed(`Invalid version format in tag: ${latestTag}. Expected format: vX.Y.Z`);
-              return;
-            }
-
-            switch (releaseType) {
-              case 'major':
-                major += 1;
-                minor = 0;
-                patch = 0;
-                core.info('Incrementing major version');
-                break;
-              case 'minor':
-                minor += 1;
-                patch = 0;
-                core.info('Incrementing minor version');
-                break;
-              case 'patch':
-                patch += 1;
-                core.info('Incrementing patch version');
-                break;
-              default:
-                core.setFailed(`Invalid release type: ${releaseType}`);
-                return;
-            }
-
-            const newTag = `v${major}.${minor}.${patch}`;
-            core.info(`Creating new tag: ${newTag}`);
-
-            await github.rest.git.createRef({
-              owner,
-              repo,
-              ref: `refs/tags/${newTag}`,
-              sha: sha
-            });
-
-            await github.rest.repos.createRelease({
-              owner,
-              repo,
-              tag_name: newTag,
-              name: newTag,
-              generate_release_notes: true,
-              draft: false,
-              prerelease: false
-            });
-
-            core.info(`Successfully created release ${newTag}`);
-            core.setOutput('tag', newTag);
+    permissions:
+      contents: write
+    uses: ./.github/workflows/auto_release.yml
+    with:
+      release_type: ${{ github.event_name == 'workflow_dispatch' && inputs.release_type || '' }}
