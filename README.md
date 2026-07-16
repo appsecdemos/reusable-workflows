@@ -1,13 +1,14 @@
 # reusable-workflows
 
-Reusable workflows for Dependabot/GitHub Advanced Security
+Reusable GitHub Actions workflows for security, dependency management, and releases.
 
 ## Workflows
 
-This repository contains reusable GitHub Actions workflows for security and dependency management:
+This repository contains the following reusable workflows:
 
 - **PR Dependency Review** - Reviews dependencies in pull requests using GitHub's dependency review action
 - **SBOM Upload** - Generates Software Bill of Materials (SBOM) using Trivy
+- **Auto Release** - Creates SemVer releases and updates the floating major branch
 
 ## Usage
 
@@ -45,6 +46,24 @@ jobs:
   sbom:
     uses: appsecdemos/reusable-workflows/.github/workflows/sbom_upload.yml@v1
     secrets: inherit
+```
+
+### Auto Release
+
+Use this workflow with an existing `vX.Y.Z` tag to release automatically from Conventional Commits (`!` or `BREAKING CHANGE:` for major, `fix:` for patch, and everything else for minor); callers can pass `release_type` to select major, minor, or patch explicitly.
+
+```yaml
+name: Release
+
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  release:
+    permissions:
+      contents: write
+    uses: appsecdemos/reusable-workflows/.github/workflows/auto_release.yml@v1
 ```
 
 ### Combined Example
