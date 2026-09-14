@@ -29,10 +29,10 @@ jobs:
   release:
     permissions:
       contents: write
-    uses: appsecdemos/reusable-workflows/.github/workflows/semantic_release.yml@<immutable-commit-sha>
+    uses: appsecdemos/reusable-workflows/.github/workflows/semantic_release.yml@v1.3.0
 ```
 
-To override inference, pass `release_type: major`, `minor`, or `patch`. Pin callers to an immutable commit SHA; do not use mutable `@main` or `@v1` references.
+To override inference, pass `release_type: major`, `minor`, or `patch`. Consumers may use an exact trusted first-party SemVer release tag such as `@v1.3.0`; do not use mutable `@main` or floating `@v1` references.
 
 ### PR dependency review
 
@@ -49,7 +49,7 @@ permissions:
 
 jobs:
   dependency-review:
-    uses: appsecdemos/reusable-workflows/.github/workflows/pr_dependency_review.yml@<immutable-commit-sha>
+    uses: appsecdemos/reusable-workflows/.github/workflows/pr_dependency_review.yml@v1.3.0
 ```
 
 No inherited secrets are required.
@@ -69,7 +69,7 @@ jobs:
   sbom:
     permissions:
       contents: write
-    uses: appsecdemos/reusable-workflows/.github/workflows/sbom_upload.yml@<immutable-commit-sha>
+    uses: appsecdemos/reusable-workflows/.github/workflows/sbom_upload.yml@v1.3.0
 ```
 
 ## License

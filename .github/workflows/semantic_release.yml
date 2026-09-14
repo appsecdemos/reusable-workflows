@@ -43,13 +43,13 @@ jobs:
           } || true)"
 
           if [[ -n "$existing_tag" ]]; then
-            if gh release view "$existing_tag" >/dev/null 2>&1; then
+            if gh release view "$existing_tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
               echo "$existing_tag already releases $TARGET_SHA; nothing to do."
               exit 0
             fi
 
             echo "Creating the missing GitHub Release for existing tag $existing_tag."
-            gh release create "$existing_tag" --verify-tag --title "$existing_tag" --generate-notes
+            gh release create "$existing_tag" --repo "$GITHUB_REPOSITORY" --verify-tag --title "$existing_tag" --generate-notes
             exit 0
           fi
 
@@ -96,7 +96,13 @@ jobs:
           esac
 
           new_tag="v$major.$minor.$patch"
-          git tag "$new_tag" "$TARGET_SHA"
-          gh auth setup-git
-          git push origin "refs/tags/$new_tag"
-          gh release create "$new_tag" --verify-tag --title "$new_tag" --generate-notes
+          if git show-ref --tags --verify --quiet "refs/tags/$new_tag"; then
+            echo "Ref $new_tag already exists but does not point at $TARGET_SHA; refusing to overwrite it." >&2
+            exit 1
+          fi
+
+          gh release create "$new_tag" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$TARGET_SHA" \
+            --title "$new_tag" \
+            --generate-notes
