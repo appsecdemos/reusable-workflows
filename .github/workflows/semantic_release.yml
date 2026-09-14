@@ -54,7 +54,7 @@ jobs:
           fi
 
           latest_tag="$({
-            git tag --list 'v*' \
+            git tag --merged "$TARGET_SHA" --list 'v*' \
               | awk '/^v[0-9]+\.[0-9]+\.[0-9]+$/' \
               | sort -V \
               | tail -n 1
@@ -96,7 +96,7 @@ jobs:
           esac
 
           new_tag="v$major.$minor.$patch"
-          git tag -a "$new_tag" "$TARGET_SHA" -m "$new_tag"
+          git tag "$new_tag" "$TARGET_SHA"
           gh auth setup-git
           git push origin "refs/tags/$new_tag"
           gh release create "$new_tag" --verify-tag --title "$new_tag" --generate-notes
