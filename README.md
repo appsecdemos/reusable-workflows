@@ -1,99 +1,76 @@
 # reusable-workflows
 
-Reusable GitHub Actions workflows for security, dependency management, and releases.
+Reusable GitHub Actions workflows for narrowly scoped security and release policy. Application build, test, artifact, and deployment steps remain in each consuming repository.
 
 ## Workflows
 
-This repository contains the following reusable workflows:
+### Semantic release
 
-- **PR Dependency Review** - Reviews dependencies in pull requests using GitHub's dependency review action
-- **SBOM Upload** - Generates Software Bill of Materials (SBOM) using Trivy
-- **Auto Release** - Creates SemVer releases and updates the floating major branch
+`semantic_release.yml` creates a semantic-version tag and GitHub Release for the caller repository. It checks out the caller repository at `github.sha` with complete history before it performs Git or GitHub operations.
 
-## Usage
+An existing `vX.Y.Z` baseline tag is required; the workflow fails clearly if none exists. It never updates floating major-version branches.
 
-### PR Dependency Review
+With no `release_type` input, the current Conventional Commit determines the increment:
 
-Use this workflow to automatically review dependencies in pull requests and identify potential security vulnerabilities.
+- `type!:` or `type(scope)!:`, or `BREAKING CHANGE:` anywhere in the message: major
+- `feat:` or `feat(scope):`: minor
+- All other commits: patch
 
-```yaml
-name: PR Security Review
-
-on:
-  pull_request:
-    branches: [ main ]
-
-jobs:
-  dependency-review:
-    uses: appsecdemos/reusable-workflows/.github/workflows/pr_dependency_review.yml@v1
-    secrets: inherit
-```
-
-### SBOM Upload
-
-Use this workflow to scan repository files with Trivy and submit an SBOM to your repo's [Dependency Graph](https://docs.github.com/en/code-security/supply-chain-security/understanding-your-software-supply-chain/about-the-dependency-graph); the caller must grant `contents: write`.
-
-```yaml
-name: Generate SBOM
-
-on:
-  push:
-    branches: [ main ]
-  release:
-    types: [ published ]
-
-jobs:
-  sbom:
-    permissions:
-      contents: write
-    uses: appsecdemos/reusable-workflows/.github/workflows/sbom_upload.yml@v1
-```
-
-### Auto Release
-
-Use this workflow with an existing `vX.Y.Z` tag to release automatically from Conventional Commits (`!` or `BREAKING CHANGE:` for major, `fix:` for patch, and everything else for minor); callers can pass `release_type` to select major, minor, or patch explicitly.
+It is idempotent: a valid version tag already pointing at `github.sha` exits successfully when its release exists, or creates only the missing GitHub Release when it does not.
 
 ```yaml
 name: Release
 
 on:
   push:
-    branches: [ main ]
+    branches: [main]
 
 jobs:
   release:
     permissions:
       contents: write
-    uses: appsecdemos/reusable-workflows/.github/workflows/auto_release.yml@v1
+    uses: appsecdemos/reusable-workflows/.github/workflows/semantic_release.yml@<immutable-commit-sha>
 ```
 
-### Combined Example
+To override inference, pass `release_type: major`, `minor`, or `patch`. Pin callers to an immutable commit SHA; do not use mutable `@main` or `@v1` references.
 
-You can also combine workflows in a single workflow file:
+### PR dependency review
+
+`pr_dependency_review.yml` runs GitHub's dependency-review action for pull requests. It uses `contents: read`, SHA-pinned actions, and a checkout without persisted credentials.
 
 ```yaml
-name: Security Workflows
+name: Dependency review
 
 on:
   pull_request:
-    branches: [ main ]
-  push:
-    branches: [ main ]
+
+permissions:
+  contents: read
 
 jobs:
   dependency-review:
-    if: github.event_name == 'pull_request'
-    uses: appsecdemos/reusable-workflows/.github/workflows/pr_dependency_review.yml@v1
-    secrets: inherit
-
-  sbom-generation:
-    if: github.event_name == 'push'
-    permissions:
-      contents: write
-    uses: appsecdemos/reusable-workflows/.github/workflows/sbom_upload.yml@v1
+    uses: appsecdemos/reusable-workflows/.github/workflows/pr_dependency_review.yml@<immutable-commit-sha>
 ```
 
-Note that this means every PR will have a "skipped" check for `sbom-generation` due to the triggers. Dependency Graph snapshots should only be uploaded on updates to your default branch.
+No inherited secrets are required.
+
+### SBOM upload
+
+`sbom_upload.yml` generates a Software Bill of Materials (SBOM) using Trivy and submits it to the repository's [Dependency Graph](https://docs.github.com/en/code-security/supply-chain-security/understanding-your-software-supply-chain/about-the-dependency-graph). The caller must grant `contents: write`.
+
+```yaml
+name: Generate SBOM
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  sbom:
+    permissions:
+      contents: write
+    uses: appsecdemos/reusable-workflows/.github/workflows/sbom_upload.yml@<immutable-commit-sha>
+```
 
 ## License
 

@@ -1,0 +1,102 @@
+name: Semantic Release
+
+on:
+  workflow_call:
+    inputs:
+      release_type:
+        description: Optional release type (major, minor, or patch). Leave empty to infer it from the commit.
+        required: false
+        type: string
+        default: ''
+
+concurrency:
+  group: semantic-release-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Check out the caller repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Create semantic release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TYPE: ${{ inputs.release_type }}
+          TARGET_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          existing_tag="$({
+            git tag --points-at "$TARGET_SHA" --list 'v*' \
+              | awk '/^v[0-9]+\.[0-9]+\.[0-9]+$/' \
+              | sort -V \
+              | tail -n 1
+          } || true)"
+
+          if [[ -n "$existing_tag" ]]; then
+            if gh release view "$existing_tag" >/dev/null 2>&1; then
+              echo "$existing_tag already releases $TARGET_SHA; nothing to do."
+              exit 0
+            fi
+
+            echo "Creating the missing GitHub Release for existing tag $existing_tag."
+            gh release create "$existing_tag" --verify-tag --title "$existing_tag" --generate-notes
+            exit 0
+          fi
+
+          latest_tag="$({
+            git tag --list 'v*' \
+              | awk '/^v[0-9]+\.[0-9]+\.[0-9]+$/' \
+              | sort -V \
+              | tail -n 1
+          } || true)"
+          if [[ -z "$latest_tag" ]]; then
+            echo 'No valid vX.Y.Z baseline tag found. Create an initial release first.' >&2
+            exit 1
+          fi
+
+          release_type="$RELEASE_TYPE"
+          if [[ -z "$release_type" ]]; then
+            message="$(git log -1 --format=%B "$TARGET_SHA")"
+            header="${message%%$'\n'*}"
+            breaking_header='^[A-Za-z][A-Za-z0-9_-]*(\([^)]+\))?!:'
+            feature_header='^feat(\([^)]+\))?:'
+
+            if [[ "$header" =~ $breaking_header ]] || [[ "$message" == *'BREAKING CHANGE:'* ]]; then
+              release_type=major
+            elif [[ "$header" =~ $feature_header ]]; then
+              release_type=minor
+            else
+              release_type=patch
+            fi
+          fi
+
+          IFS=. read -r major minor patch <<< "${latest_tag#v}"
+          major=$((10#$major))
+          minor=$((10#$minor))
+          patch=$((10#$patch))
+
+          case "$release_type" in
+            major) major=$((major + 1)); minor=0; patch=0 ;;
+            minor) minor=$((minor + 1)); patch=0 ;;
+            patch) patch=$((patch + 1)) ;;
+            *)
+              echo "Invalid release_type: $release_type. Expected major, minor, patch, or empty." >&2
+              exit 1
+              ;;
+          esac
+
+          new_tag="v$major.$minor.$patch"
+          git tag -a "$new_tag" "$TARGET_SHA" -m "$new_tag"
+          gh auth setup-git
+          git push origin "refs/tags/$new_tag"
+          gh release create "$new_tag" --verify-tag --title "$new_tag" --generate-notes
