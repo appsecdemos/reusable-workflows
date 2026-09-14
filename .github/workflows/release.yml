@@ -8,18 +8,14 @@ on:
     inputs:
       release_type:
         description: 'Type of release (major, minor, patch)'
-        required: true
-        type: choice
-        default: 'minor'
-        options:
-          - major
-          - minor
-          - patch
+        required: false
+        type: string
+        default: ''
 
 jobs:
   release:
     permissions:
       contents: write
-    uses: ./.github/workflows/auto_release.yml
+    uses: ./.github/workflows/semantic_release.yml
     with:
       release_type: ${{ github.event_name == 'workflow_dispatch' && inputs.release_type || '' }}
