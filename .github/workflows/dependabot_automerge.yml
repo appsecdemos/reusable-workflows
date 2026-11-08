@@ -3,13 +3,8 @@ name: Dependabot automerge
 on:
   workflow_call:
     inputs:
-      trusted_checks:
-        description: JSON object mapping required check names to trusted workflow paths
-        required: true
-        type: string
       dry_run:
-        description: Report eligibility without requesting an App token or merging
-        required: false
+        description: Report eligible PRs without creating an App token or merging
         type: boolean
         default: true
     secrets:
@@ -19,35 +14,58 @@ on:
         required: false
 
 permissions:
-  actions: read
-  checks: read
   contents: read
   pull-requests: read
 
 jobs:
-  evaluate:
+  automerge:
     if: github.event_name == 'workflow_run'
     runs-on: ubuntu-latest
-    permissions:
-      actions: read
-      checks: read
-      contents: read
-      pull-requests: read
     steps:
-      - name: Check out trusted reusable workflow code
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: ${{ job.workflow_repository }}
-          ref: ${{ job.workflow_sha }}
-          persist-credentials: false
-      - name: Evaluate PR
-        id: policy
+      - name: Identify Dependabot PR
+        id: pr
         env:
           GH_TOKEN: ${{ github.token }}
-          TRUSTED_CHECKS: ${{ inputs.trusted_checks }}
-        run: python3 scripts/dependabot_automerge.py
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if ! jq -e '.action == "completed" and .workflow_run.event == "pull_request" and .workflow_run.conclusion == "success"' "$GITHUB_EVENT_PATH" >/dev/null; then
+            echo 'Denied: trigger is not a successful pull request workflow run.'
+            exit 0
+          fi
+          head_sha=$(jq -er '.workflow_run.head_sha | select(test("^[0-9a-f]{40}$"))' "$GITHUB_EVENT_PATH")
+          repo=$(gh api "repos/$GITHUB_REPOSITORY")
+          default_branch=$(jq -er '.default_branch' <<< "$repo")
+          repo_id=$(jq -er '.id' <<< "$repo")
+          prs=$(gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/pulls?state=open&per_page=100" | jq --arg sha "$head_sha" '[.[][] | select(.head.sha == $sha)]')
+          if [[ $(jq 'length' <<< "$prs") != 1 ]]; then
+            echo 'Denied: the triggering revision does not identify exactly one open PR.'
+            exit 0
+          fi
+          number=$(jq -er '.[0].number | select(type == "number" and . > 0 and floor == .)' <<< "$prs")
+          pr=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$number")
+          if ! jq -e --arg sha "$head_sha" --arg branch "$default_branch" --argjson repo_id "$repo_id" '
+            .state == "open" and .draft == false and
+            .user.login == "dependabot[bot]" and .user.id == 49699333 and .user.type == "Bot" and
+            .head.sha == $sha and .head.repo.id == $repo_id and
+            .base.repo.id == $repo_id and .base.ref == $branch
+          ' <<< "$pr" >/dev/null; then
+            echo "Denied: PR #$number identity, origin, target, or head revision did not match."
+            exit 0
+          fi
+          echo "Eligible: PR #$number at $head_sha. GitHub will enforce required CI at merge time."
+          echo "number=$number" >> "$GITHUB_OUTPUT"
+          echo "head_sha=$head_sha" >> "$GITHUB_OUTPUT"
+          echo 'eligible=true' >> "$GITHUB_OUTPUT"
+
+      - name: Report dry run
+        if: steps.pr.outputs.eligible == 'true' && inputs.dry_run
+        run: |
+          echo 'Dry run: a squash merge would be attempted; required CI was not evaluated here.'
+
       - name: Create repository-scoped App token
-        if: steps.policy.outputs.eligible == 'true' && !inputs.dry_run
+        if: steps.pr.outputs.eligible == 'true' && !inputs.dry_run
         id: app
         uses: actions/create-github-app-token@7bd03711494f032dfa3be3558f7dc8787b0be333 # v3.1.0
         with:
@@ -56,10 +74,36 @@ jobs:
           owner: ${{ github.repository_owner }}
           repositories: ${{ github.event.repository.name }}
           permission-contents: write
+          permission-pull-requests: read
+
       - name: Recheck and squash merge
-        if: steps.policy.outputs.eligible == 'true' && !inputs.dry_run
+        if: steps.pr.outputs.eligible == 'true' && !inputs.dry_run
         env:
-          GH_TOKEN: ${{ github.token }}
-          MERGE_TOKEN: ${{ steps.app.outputs.token }}
-          TRUSTED_CHECKS: ${{ inputs.trusted_checks }}
-        run: python3 scripts/dependabot_automerge.py
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
+          HEAD_SHA: ${{ steps.pr.outputs.head_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          repo=$(gh api "repos/$GITHUB_REPOSITORY")
+          default_branch=$(jq -er '.default_branch' <<< "$repo")
+          repo_id=$(jq -er '.id' <<< "$repo")
+          pr=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER")
+          if ! jq -e --arg sha "$HEAD_SHA" --arg branch "$default_branch" --argjson repo_id "$repo_id" '
+            .state == "open" and .draft == false and
+            .user.login == "dependabot[bot]" and .user.id == 49699333 and .user.type == "Bot" and
+            .head.sha == $sha and .head.repo.id == $repo_id and
+            .base.repo.id == $repo_id and .base.ref == $branch and .mergeable == true
+          ' <<< "$pr" >/dev/null; then
+            echo "Denied: PR #$PR_NUMBER changed or its mergeability is uncertain."
+            exit 1
+          fi
+          echo "Attempting squash merge of PR #$PR_NUMBER at $HEAD_SHA."
+          if gh api --method PUT "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/merge" \
+            -f sha="$HEAD_SHA" -f merge_method=squash --silent; then
+            echo "Merged PR #$PR_NUMBER."
+          else
+            echo "Merge was not completed; GitHub may still be waiting for required checks."
+            exit 1
+          fi
