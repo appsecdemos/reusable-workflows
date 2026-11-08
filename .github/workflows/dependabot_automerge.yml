@@ -1,0 +1,65 @@
+name: Dependabot automerge
+
+on:
+  workflow_call:
+    inputs:
+      trusted_checks:
+        description: JSON object mapping required check names to trusted workflow paths
+        required: true
+        type: string
+      dry_run:
+        description: Report eligibility without requesting an App token or merging
+        required: false
+        type: boolean
+        default: true
+    secrets:
+      app_client_id:
+        required: false
+      app_private_key:
+        required: false
+
+permissions:
+  actions: read
+  checks: read
+  contents: read
+  pull-requests: read
+
+jobs:
+  evaluate:
+    if: github.event_name == 'workflow_run'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      checks: read
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Check out trusted reusable workflow code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          persist-credentials: false
+      - name: Evaluate PR
+        id: policy
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TRUSTED_CHECKS: ${{ inputs.trusted_checks }}
+        run: python3 scripts/dependabot_automerge.py
+      - name: Create repository-scoped App token
+        if: steps.policy.outputs.eligible == 'true' && !inputs.dry_run
+        id: app
+        uses: actions/create-github-app-token@7bd03711494f032dfa3be3558f7dc8787b0be333 # v3.1.0
+        with:
+          client-id: ${{ secrets.app_client_id }}
+          private-key: ${{ secrets.app_private_key }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: write
+      - name: Recheck and squash merge
+        if: steps.policy.outputs.eligible == 'true' && !inputs.dry_run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MERGE_TOKEN: ${{ steps.app.outputs.token }}
+          TRUSTED_CHECKS: ${{ inputs.trusted_checks }}
+        run: python3 scripts/dependabot_automerge.py
