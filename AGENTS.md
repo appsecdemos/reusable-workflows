@@ -17,7 +17,6 @@
   ```text
   AI-Assisted-By: <tool or agent>
   AI-Model: <model>
-  AI-Reasoning: <reasoning level>
   ```
 
 - Omit unknown provenance fields rather than guessing them.

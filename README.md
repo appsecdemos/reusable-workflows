@@ -54,6 +54,37 @@ jobs:
 
 No inherited secrets are required.
 
+### Dependabot automerge
+
+`dependabot_automerge.yml` checks that a completed CI run belongs to an open, same-repository Dependabot PR targeting the default branch, then can squash-merge the verified head. GitHub enforces required checks. It defaults to dry run, which reports the decision without creating an App token or merging.
+
+Example caller for `appseccharlie-site`; replace `<RELEASE>` with an exact released SemVer tag containing this workflow:
+
+```yaml
+name: Dependabot automerge
+on:
+  workflow_run:
+    workflows: [Deploy and Release, Dependency review]
+    types: [completed]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  automerge:
+    uses: appsecdemos/reusable-workflows/.github/workflows/dependabot_automerge.yml@<RELEASE>
+    with:
+      dry_run: true
+    secrets:
+      app_client_id: ${{ secrets.AUTOMERGE_APP_CLIENT_ID }}
+      app_private_key: ${{ secrets.AUTOMERGE_APP_PRIVATE_KEY }}
+```
+
+Install the GitHub App on the caller repository with Contents read/write and Pull Requests read; pass its client ID and private key as shown. When merging is enabled, the workflow creates a short-lived token scoped to that repository.
+
+Before setting `dry_run: false`, configure and verify two [rulesets](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/creating-rulesets-for-a-repository): one requiring CODEOWNER approval with a pull-request-only App bypass, and a separate strict mandatory CI ruleset with no App bypass. Verify that the required CI workflows are trustworthy and test representative PRs in dry-run mode first. Both CI workflows trigger an attempt so GitHub can reject a premature merge and allow a later attempt when all required checks pass.
+
 ### SBOM upload
 
 `sbom_upload.yml` generates a Software Bill of Materials (SBOM) using Trivy and submits it to the repository's [Dependency Graph](https://docs.github.com/en/code-security/supply-chain-security/understanding-your-software-supply-chain/about-the-dependency-graph). The caller must grant `contents: write`.
