@@ -56,15 +56,15 @@ No inherited secrets are required.
 
 ### Dependabot automerge
 
-`dependabot_automerge.yml` considers open, same-repository Dependabot PRs targeting the default branch after a successful PR workflow completes. It verifies the triggering revision against the PR head and, when enabled, rechecks it before a direct squash merge guarded by that SHA. It never checks out PR code or downloads artifacts. GitHub enforces the required CI checks at merge time; this workflow does not inspect them. Dry run is the default and does not create an App token or attempt a merge.
+`dependabot_automerge.yml` checks that a completed CI run belongs to an open, same-repository Dependabot PR targeting the default branch, then can squash-merge the verified head. GitHub enforces required checks. It defaults to dry run, which reports the decision without creating an App token or merging.
 
-Add a caller on the protected default branch. Replace the example workflow names with the **exact names** of both required CI workflows, and replace `<RELEASE>` with an exact SemVer release containing this workflow. Both workflows must trigger it so the last successful completion can retry the merge.
+Example caller for `appseccharlie-site`; replace `<RELEASE>` with an exact released SemVer tag containing this workflow:
 
 ```yaml
 name: Dependabot automerge
 on:
   workflow_run:
-    workflows: [Test, Dependency review]
+    workflows: [Deploy and Release, Dependency review]
     types: [completed]
 
 permissions:
@@ -81,14 +81,9 @@ jobs:
       app_private_key: ${{ secrets.AUTOMERGE_APP_PRIVATE_KEY }}
 ```
 
-The caller explicitly passes the App secrets. Only after a PR passes the identity and revision checks, and only when dry run is disabled, the workflow creates a short-lived App token restricted to the caller repository with Contents write and Pull Requests read. The App merges; it does not approve the PR.
+Install the GitHub App on the caller repository with Contents read/write and Pull Requests read; pass its client ID and private key as shown. When merging is enabled, the workflow creates a short-lived token scoped to that repository.
 
-Before enabling writes, configure and verify **two separate rulesets** for the default branch:
-
-1. Require CODEOWNER approval, with the App allowed to bypass this ruleset **only via pull requests**.
-2. Require strict mandatory CI checks, with **no App bypass**. Include both CI workflows and ensure their checks are independently trustworthy.
-
-Review the reusable workflow and publish a release separately, add the caller in dry-run mode, and inspect its logs on representative Dependabot PRs. Verify the rulesets and required check names before a later authorized change sets `dry_run: false`. The first workflow completion may attempt a merge while another check is pending; GitHub must reject it, and the next successful completion retries. The merge API protects the head SHA, but does not atomically guard against a base branch or target change between the final check and merge; protect target branches and rules accordingly.
+Before setting `dry_run: false`, configure and verify two [rulesets](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/creating-rulesets-for-a-repository): one requiring CODEOWNER approval with a pull-request-only App bypass, and a separate strict mandatory CI ruleset with no App bypass. Verify that the required CI workflows are trustworthy and test representative PRs in dry-run mode first. Both CI workflows trigger an attempt so GitHub can reject a premature merge and allow a later attempt when all required checks pass.
 
 ### SBOM upload
 

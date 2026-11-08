@@ -24,40 +24,43 @@ jobs:
     steps:
       - name: Identify Dependabot PR
         id: pr
-        env:
-          GH_TOKEN: ${{ github.token }}
-        shell: bash
-        run: |
-          set -euo pipefail
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const run = context.payload.workflow_run;
+            if (context.payload.action !== 'completed' || run?.event !== 'pull_request' ||
+                run.conclusion !== 'success' || !/^[0-9a-f]{40}$/.test(run.head_sha ?? '')) {
+              core.info('Denied: trigger is not a successful PR workflow run with a valid revision.');
+              return;
+            }
 
-          if ! jq -e '.action == "completed" and .workflow_run.event == "pull_request" and .workflow_run.conclusion == "success"' "$GITHUB_EVENT_PATH" >/dev/null; then
-            echo 'Denied: trigger is not a successful pull request workflow run.'
-            exit 0
-          fi
-          head_sha=$(jq -er '.workflow_run.head_sha | select(test("^[0-9a-f]{40}$"))' "$GITHUB_EVENT_PATH")
-          repo=$(gh api "repos/$GITHUB_REPOSITORY")
-          default_branch=$(jq -er '.default_branch' <<< "$repo")
-          repo_id=$(jq -er '.id' <<< "$repo")
-          prs=$(gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/pulls?state=open&per_page=100" | jq --arg sha "$head_sha" '[.[][] | select(.head.sha == $sha)]')
-          if [[ $(jq 'length' <<< "$prs") != 1 ]]; then
-            echo 'Denied: the triggering revision does not identify exactly one open PR.'
-            exit 0
-          fi
-          number=$(jq -er '.[0].number | select(type == "number" and . > 0 and floor == .)' <<< "$prs")
-          pr=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$number")
-          if ! jq -e --arg sha "$head_sha" --arg branch "$default_branch" --argjson repo_id "$repo_id" '
-            .state == "open" and .draft == false and
-            .user.login == "dependabot[bot]" and .user.id == 49699333 and .user.type == "Bot" and
-            .head.sha == $sha and .head.repo.id == $repo_id and
-            .base.repo.id == $repo_id and .base.ref == $branch
-          ' <<< "$pr" >/dev/null; then
-            echo "Denied: PR #$number identity, origin, target, or head revision did not match."
-            exit 0
-          fi
-          echo "Eligible: PR #$number at $head_sha. GitHub will enforce required CI at merge time."
-          echo "number=$number" >> "$GITHUB_OUTPUT"
-          echo "head_sha=$head_sha" >> "$GITHUB_OUTPUT"
-          echo 'eligible=true' >> "$GITHUB_OUTPUT"
+            const { owner, repo } = context.repo;
+            const { data: repository } = await github.rest.repos.get({ owner, repo });
+            if (!Number.isSafeInteger(repository.id) || !repository.default_branch) {
+              throw new Error('Repository identity or default branch is unavailable.');
+            }
+            const associated = await github.paginate(github.rest.repos.listPullRequestsAssociatedWithCommit, {
+              owner, repo, commit_sha: run.head_sha, per_page: 100
+            });
+            const candidates = associated.filter(pr => pr.state === 'open' && pr.head.sha === run.head_sha);
+            if (candidates.length !== 1) {
+              core.info('Denied: the triggering revision does not identify exactly one open PR.');
+              return;
+            }
+            const { data: pr } = await github.rest.pulls.get({
+              owner, repo, pull_number: candidates[0].number
+            });
+            if (pr.state !== 'open' || pr.draft !== false ||
+                pr.user?.login !== 'dependabot[bot]' || pr.user?.id !== 49699333 || pr.user?.type !== 'Bot' ||
+                pr.head.sha !== run.head_sha || pr.head.repo?.id !== repository.id ||
+                pr.base.repo?.id !== repository.id || pr.base.ref !== repository.default_branch) {
+              core.info(`Denied: PR #${pr.number} identity, origin, target, or head revision did not match.`);
+              return;
+            }
+            core.info(`Eligible: PR #${pr.number} at ${run.head_sha}. GitHub enforces required CI at merge time.`);
+            core.setOutput('number', pr.number);
+            core.setOutput('head_sha', run.head_sha);
+            core.setOutput('eligible', 'true');
 
       - name: Report dry run
         if: steps.pr.outputs.eligible == 'true' && inputs.dry_run
@@ -67,7 +70,7 @@ jobs:
       - name: Create repository-scoped App token
         if: steps.pr.outputs.eligible == 'true' && !inputs.dry_run
         id: app
-        uses: actions/create-github-app-token@7bd03711494f032dfa3be3558f7dc8787b0be333 # v3.1.0
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
           client-id: ${{ secrets.app_client_id }}
           private-key: ${{ secrets.app_private_key }}
@@ -78,32 +81,33 @@ jobs:
 
       - name: Recheck and squash merge
         if: steps.pr.outputs.eligible == 'true' && !inputs.dry_run
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
-          GH_TOKEN: ${{ steps.app.outputs.token }}
           PR_NUMBER: ${{ steps.pr.outputs.number }}
           HEAD_SHA: ${{ steps.pr.outputs.head_sha }}
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          repo=$(gh api "repos/$GITHUB_REPOSITORY")
-          default_branch=$(jq -er '.default_branch' <<< "$repo")
-          repo_id=$(jq -er '.id' <<< "$repo")
-          pr=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER")
-          if ! jq -e --arg sha "$HEAD_SHA" --arg branch "$default_branch" --argjson repo_id "$repo_id" '
-            .state == "open" and .draft == false and
-            .user.login == "dependabot[bot]" and .user.id == 49699333 and .user.type == "Bot" and
-            .head.sha == $sha and .head.repo.id == $repo_id and
-            .base.repo.id == $repo_id and .base.ref == $branch and .mergeable == true
-          ' <<< "$pr" >/dev/null; then
-            echo "Denied: PR #$PR_NUMBER changed or its mergeability is uncertain."
-            exit 1
-          fi
-          echo "Attempting squash merge of PR #$PR_NUMBER at $HEAD_SHA."
-          if gh api --method PUT "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/merge" \
-            -f sha="$HEAD_SHA" -f merge_method=squash --silent; then
-            echo "Merged PR #$PR_NUMBER."
-          else
-            echo "Merge was not completed; GitHub may still be waiting for required checks."
-            exit 1
-          fi
+        with:
+          github-token: ${{ steps.app.outputs.token }}
+          script: |
+            const { owner, repo } = context.repo;
+            const pull_number = Number(process.env.PR_NUMBER);
+            const sha = process.env.HEAD_SHA;
+            if (!Number.isSafeInteger(pull_number) || pull_number < 1 || !/^[0-9a-f]{40}$/.test(sha ?? '')) {
+              throw new Error('PR number or expected revision is invalid.');
+            }
+            const { data: repository } = await github.rest.repos.get({ owner, repo });
+            const { data: pr } = await github.rest.pulls.get({ owner, repo, pull_number });
+            if (!Number.isSafeInteger(repository.id) || !repository.default_branch ||
+                pr.state !== 'open' || pr.draft !== false ||
+                pr.user?.login !== 'dependabot[bot]' || pr.user?.id !== 49699333 || pr.user?.type !== 'Bot' ||
+                pr.head.sha !== sha || pr.head.repo?.id !== repository.id ||
+                pr.base.repo?.id !== repository.id || pr.base.ref !== repository.default_branch) {
+              throw new Error(`Denied: PR #${pull_number} identity, origin, target, or head revision did not match.`);
+            }
+            core.info(`Attempting squash merge of PR #${pull_number} at ${sha}.`);
+            const { data: result } = await github.rest.pulls.merge({
+              owner, repo, pull_number, sha, merge_method: 'squash'
+            });
+            if (result.merged !== true) {
+              throw new Error(`GitHub did not confirm the merge of PR #${pull_number}.`);
+            }
+            core.info(`Merged PR #${pull_number}.`);
